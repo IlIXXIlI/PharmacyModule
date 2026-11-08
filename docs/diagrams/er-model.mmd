@@ -1,0 +1,93 @@
+erDiagram
+    PHARMACIES {
+        BIGINT id PK
+        VARCHAR name
+        VARCHAR address
+        VARCHAR phone
+    }
+    USERS {
+        BIGINT id PK
+        BIGINT pharmacy_id FK
+        VARCHAR full_name
+        VARCHAR login UK
+        VARCHAR password_hash
+        VARCHAR role
+    }
+    MEDICINES {
+        BIGINT id PK
+        VARCHAR name
+        VARCHAR manufacturer
+        VARCHAR dosage
+        VARCHAR form
+        VARCHAR barcode UK
+    }
+    SUPPLIERS {
+        BIGINT id PK
+        VARCHAR name
+        VARCHAR phone
+        VARCHAR email
+        VARCHAR address
+    }
+    RECEIPTS {
+        BIGINT id PK
+        BIGINT supplier_id FK
+        BIGINT pharmacy_id FK
+        BIGINT user_id FK
+        DATE receipt_date
+        VARCHAR document_number
+    }
+    RECEIPT_ITEMS {
+        BIGINT id PK
+        BIGINT receipt_id FK
+        BIGINT medicine_id FK
+        INTEGER quantity
+        DECIMAL purchase_price
+    }
+    BATCHES {
+        BIGINT id PK
+        BIGINT medicine_id FK
+        BIGINT pharmacy_id FK
+        BIGINT receipt_item_id FK
+        VARCHAR batch_number
+        DATE production_date
+        DATE expiry_date
+        INTEGER initial_quantity
+        INTEGER current_quantity
+    }
+    SALES {
+        BIGINT id PK
+        BIGINT pharmacy_id FK
+        BIGINT user_id FK
+        DATETIME sale_date
+        DECIMAL total_amount
+        VARCHAR status
+    }
+    SALE_ITEMS {
+        BIGINT id PK
+        BIGINT sale_id FK
+        BIGINT medicine_id FK
+        INTEGER quantity
+        DECIMAL sale_price
+    }
+    SALE_BATCH_ITEMS {
+        BIGINT id PK
+        BIGINT sale_item_id FK
+        BIGINT batch_id FK
+        INTEGER quantity
+    }
+
+    PHARMACIES ||--o{ USERS : employs
+    PHARMACIES ||--o{ RECEIPTS : receives
+    PHARMACIES ||--o{ BATCHES : stores
+    PHARMACIES ||--o{ SALES : records
+    USERS ||--o{ RECEIPTS : registers
+    USERS ||--o{ SALES : processes
+    SUPPLIERS ||--o{ RECEIPTS : supplies
+    RECEIPTS ||--|{ RECEIPT_ITEMS : contains
+    MEDICINES ||--o{ RECEIPT_ITEMS : included_in
+    RECEIPT_ITEMS ||--o{ BATCHES : creates
+    MEDICINES ||--o{ BATCHES : has
+    SALES ||--|{ SALE_ITEMS : contains
+    MEDICINES ||--o{ SALE_ITEMS : sold_as
+    SALE_ITEMS ||--|{ SALE_BATCH_ITEMS : divided_into
+    BATCHES ||--o{ SALE_BATCH_ITEMS : written_off_from
