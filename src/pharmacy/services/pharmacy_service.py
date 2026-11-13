@@ -14,17 +14,38 @@ from .stock_service import StockService
 
 
 class PharmacyService:
-    def __init__(self, database: BaseDatabaseProvider) -> None:
-        self._stock = StockService(database)
-        self._receipts = ReceiptService(database)
-        self._sales = SaleService(database)
-        self._catalog = CatalogService(database)
+    def __init__(self, database: BaseDatabaseProvider,
+                 stock: StockService | None = None,
+                 receipts: ReceiptService | None = None,
+                 sales: SaleService | None = None,
+                 catalog: CatalogService | None = None
+                 ) -> None:
+        if stock is None:
+            self._stock = StockService(database)
+        else :
+            self._stock = stock
+
+        if receipts is None:
+            self._receipts = ReceiptService(database)
+        else:
+            self._receipts = receipts
+
+        if sales is None:
+            self._sales = SaleService(database)
+        else:
+            self._sales = sales
+
+        if catalog is None:
+            self._catalog = CatalogService(database)
+        else:
+            self._catalog = catalog
+
 
     def list_medicines(self) -> list[Medicine]:
         return self._catalog.list_medicines()
 
     def add_medicine(self, medicine: Medicine) -> Medicine:
-        return self._catalog.add_medicine(medicine)
+        return self._catalog.add _medicine(medicine)
 
     def list_suppliers(self) -> list[Supplier]:
         return self._catalog.list_suppliers()
