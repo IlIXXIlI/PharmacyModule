@@ -1,0 +1,19 @@
+services:
+  pharmacy:
+    build:
+      context: .
+      args:
+        INSTALL_POSTGRES: ${INSTALL_POSTGRES:-false}
+    image: pharmacy-accounting-module:local
+    environment:
+      DATABASE_BACKEND: ${DATABASE_BACKEND:-sqlite}
+      SQLITE_DATABASE_PATH: /app/data/pharmacy.db
+      POSTGRES_DSN: ${POSTGRES_DSN:-}
+      PERSISTENCE_STRATEGY: ${PERSISTENCE_STRATEGY:-sqlalchemy}
+    stdin_open: true
+    tty: true
+    volumes:
+      - pharmacy-data:/app/data
+
+volumes:
+  pharmacy-data:
