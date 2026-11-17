@@ -134,3 +134,25 @@ class SaleBatchItem(Base):
     sale_item_id: Mapped[int] = mapped_column(ForeignKey("SALE_ITEMS.id"), nullable=False)
     batch_id: Mapped[int] = mapped_column(ForeignKey("BATCHES.id"), nullable=False)
     quantity: Mapped[int] = mapped_column(nullable=False)
+
+
+class WriteOff(Base):
+    __tablename__ = "WRITE_OFFS"
+    __table_args__ = (CheckConstraint("status = 'completed'", name="ck_writeoffs_status"),)
+
+    id: Mapped[int] = mapped_column(IdType, primary_key=True, autoincrement=True)
+    pharmacy_id: Mapped[int] = mapped_column(ForeignKey("PHARMACIES.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("USERS.id"), nullable=False)
+    written_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="completed")
+
+
+class WriteOffBatchItem(Base):
+    __tablename__ = "WRITE_OFF_BATCH_ITEMS"
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_writeoff_items_quantity"),)
+
+    id: Mapped[int] = mapped_column(IdType, primary_key=True, autoincrement=True)
+    write_off_id: Mapped[int] = mapped_column(ForeignKey("WRITE_OFFS.id"), nullable=False)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("BATCHES.id"), nullable=False)
+    quantity: Mapped[int] = mapped_column(nullable=False)

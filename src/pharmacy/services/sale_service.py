@@ -1,7 +1,8 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from ..contracts.database import SaleUnitOfWorkFactory
+from ..contracts.dto.reports import SalesReport
 from ..contracts.dto.sales import SaleLine, SaleRequest, SaleResult
 from .fefo import plan_fefo_allocation
 
@@ -30,6 +31,13 @@ class SaleService:
             sale_date=sale_date or datetime.now(timezone.utc),
         )
         return self.execute(request)
+
+    def sales_report(self, start_date: date, end_date: date,
+                     pharmacy_id: int | None = None) -> SalesReport:
+        if start_date > end_date:
+            raise ValueError("Начало отчётного периода позже его окончания")
+        with self._database.unit_of_work() as work:
+            return work.sales.sales_report(start_date, end_date, pharmacy_id)
 
     def execute(self, request: SaleRequest) -> SaleResult:
         if not request.items:
@@ -80,3 +88,23 @@ class SaleService:
                     )
 
             return SaleResult(sale_id=sale_id, total_amount=total)
+
+    def write_off_goods(self, pharmacy_id: int, user_id: int, medicine_id: int,
+                        quantity: int, reason: str, write_off_date: date) -> int:
+        if min(pharmacy_id, user_id, medicine_id, quantity) <= 0:
+            raise ValueError("ID должны быть положительными, количество должно быть больше нуля")
+        if not reason.strip():
+            raise ValueError("Укажите причину списания")
+        with self._database.unit_of_work() as work:
+            if work.medicines.get(medicine_id) is None:
+                raise LookupError(f"Препарат {medicine_id} не найден")
+            batches = work.sales.lock_batches_for_write_off(pharmacy_id, medicine_id)
+            allocations = plan_fefo_allocation(batches, quantity, write_off_date, include_expired=True)
+            record_id = work.sales.create_write_off(
+                pharmacy_id, user_id, datetime.combine(write_off_date, datetime.min.time(), tzinfo=timezone.utc), reason.strip()
+            )
+            for allocation in allocations:
+                if not work.sales.decrease_batch_quantity(allocation.batch_id, allocation.quantity):
+                    raise StockChangedDuringSale(f"Остаток партии {allocation.batch_id} изменился во время списания")
+                work.sales.add_write_off_allocation(record_id, allocation.batch_id, allocation.quantity)
+            return record_id

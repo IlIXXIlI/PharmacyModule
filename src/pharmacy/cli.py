@@ -1,4 +1,5 @@
 import argparse
+import sys
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Sequence
@@ -6,11 +7,15 @@ from typing import Sequence
 from .config import Settings
 from .contracts.dto.receiving import ReceivedBatch, ReceiptLine, ReceiptRequest
 from .database.providers import create_database
-from .entities import Medicine, Supplier
-from .services import PharmacyService
+from .entities import Medicine, Supplier, User
+from .services import PharmacyService, UserService
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv:
+        argv = ("interactive",)
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -31,9 +36,32 @@ def main(argv: Sequence[str] | None = None) -> None:
             return
 
         service = PharmacyService(database)
-        _run_command(args, service)
+        user_service = UserService(database)
+        if args.command == "interactive":
+            from .interactive import run_interactive
+
+            run_interactive(service, user_service)
+            return
+        if args.command == "auth":
+            login = args.login or input("Логин: ").strip()
+            actor = user_service.authenticate_login(login)
+            print(f"Вход выполнен: {actor.full_name} | роль: {actor.role} | аптека: {actor.pharmacy_id}")
+            return
+        if args.command == "user" and args.action == "bootstrap-admin":
+            admin = user_service.bootstrap_admin(
+                args.pharmacy_id, args.full_name.strip(), args.login.strip()
+            )
+            print(f"Администратор создан. ID: {admin.id}")
+            return
+        actor = user_service.authenticate_login(args.as_user)
+        _authorize_command(args, actor)
+        if args.command in {"receive", "sell"} or (args.command == "writeoff" and args.medicine_id is not None):
+            args.user_id = actor.id
+        if hasattr(args, "pharmacy_id") and args.pharmacy_id is None:
+            args.pharmacy_id = actor.pharmacy_id
+        _run_command(args, service, user_service)
     except Exception as error:
-        expected = isinstance(error, (ValueError, LookupError, RuntimeError))
+        expected = isinstance(error, (ValueError, LookupError, RuntimeError, PermissionError))
         database_error = error.__class__.__module__.startswith(("sqlalchemy", "psycopg"))
         if expected or database_error:
             parser.exit(2, f"Ошибка: {error}\n")
@@ -45,6 +73,29 @@ def _build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init", help="создать таблицы базы данных")
     commands.add_parser("seed", help="добавить демонстрационные записи")
+    commands.add_parser("interactive", help="войти и открыть меню")
+    auth = commands.add_parser("auth", help="проверить логин")
+    auth.add_argument("--login", help="логин; если не указан, будет запрошен")
+
+    user = commands.add_parser("user", help="управление пользователями и ролями")
+    user_commands = user.add_subparsers(dest="action", required=True)
+    user_commands.add_parser("list", help="показать пользователей и их роли")
+    user_get = user_commands.add_parser("get", help="показать пользователя")
+    user_get.add_argument("--user-id", type=int, required=True)
+    user_delete = user_commands.add_parser("delete", help="удалить пользователя")
+    user_delete.add_argument("--user-id", type=int, required=True)
+    user_role = user_commands.add_parser("set-role", help="изменить роль пользователя")
+    user_role.add_argument("--user-id", type=int, required=True)
+    user_role.add_argument("--role", choices=("admin", "pharmacist", "manager"), required=True)
+    user_add = user_commands.add_parser("add", help="создать пользователя")
+    user_add.add_argument("--pharmacy-id", type=int, required=True)
+    user_add.add_argument("--full-name", required=True)
+    user_add.add_argument("--login", required=True)
+    user_add.add_argument("--role", choices=("admin", "pharmacist", "manager"), default="admin")
+    bootstrap = user_commands.add_parser("bootstrap-admin", help="создать первого администратора")
+    bootstrap.add_argument("--pharmacy-id", type=int, required=True)
+    bootstrap.add_argument("--full-name", required=True)
+    bootstrap.add_argument("--login", required=True)
 
     stock = commands.add_parser("stock", help="показать складские остатки")
     stock.add_argument("--pharmacy-id", type=int)
@@ -54,6 +105,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     write_off.add_argument("--pharmacy-id", type=int)
     write_off.add_argument("--date", type=_parse_date, default=date.today())
+    write_off.add_argument("--medicine-id", type=int, help="списать конкретный препарат")
+    write_off.add_argument("--quantity", type=int, help="количество для списания")
+    write_off.add_argument("--reason", help="причина списания")
 
     candidates = commands.add_parser(
         "sale-candidates", help="показать товары, доступные для продажи"
@@ -83,7 +137,6 @@ def _build_parser() -> argparse.ArgumentParser:
     receipt = commands.add_parser("receive", help="принять товар и зарегистрировать партии")
     receipt.add_argument("--supplier-id", type=int, required=True)
     receipt.add_argument("--pharmacy-id", type=int, required=True)
-    receipt.add_argument("--user-id", type=int, required=True)
     receipt.add_argument("--date", type=_parse_date, default=date.today())
     receipt.add_argument("--document", required=True)
     receipt.add_argument(
@@ -98,7 +151,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sale = commands.add_parser("sell", help="продать выбранный препарат по FEFO")
     sale.add_argument("--pharmacy-id", type=int, required=True)
-    sale.add_argument("--user-id", type=int, required=True)
     sale.add_argument("--medicine-id", type=int, required=True)
     sale.add_argument("--quantity", type=int, required=True)
     sale.add_argument("--price", type=_parse_decimal, required=True)
@@ -106,10 +158,68 @@ def _build_parser() -> argparse.ArgumentParser:
         "--date", type=_parse_datetime,
         help="дата и время ISO с часовым поясом; по умолчанию текущее время UTC",
     )
+
+    sales_report = commands.add_parser("sales-report", help="отчёт и аналитика продаж")
+    sales_report.add_argument("--from", dest="start_date", type=_parse_date, required=True)
+    sales_report.add_argument("--to", dest="end_date", type=_parse_date, required=True)
+    sales_report.add_argument("--pharmacy-id", type=int)
+
+    _add_actor_options(parser)
     return parser
 
 
-def _run_command(args: argparse.Namespace, service: PharmacyService) -> None:
+def _add_actor_options(parser: argparse.ArgumentParser) -> None:
+    def visit(current: argparse.ArgumentParser, path: tuple[str, ...] = ()) -> None:
+        for action in current._actions:
+            choices = getattr(action, "choices", None)
+            if not choices or not isinstance(choices, dict):
+                continue
+            for name, child in choices.items():
+                child_path = path + (name,)
+                visit(child, child_path)
+        has_subcommands = any(getattr(action, "choices", None) for action in current._actions)
+        if path and not has_subcommands and path not in {
+            ("init",), ("seed",), ("auth",), ("interactive",), ("user", "bootstrap-admin")
+        }:
+            current.add_argument("--as-user", required=True, help="логин вошедшего пользователя")
+
+    visit(parser)
+
+
+_COMMAND_ROLES = {
+    ("stock",): {"admin", "pharmacist", "manager"},
+    ("writeoff",): {"pharmacist", "manager"},
+    ("sale-candidates",): {"pharmacist"},
+    ("medicine", "list"): {"admin", "pharmacist"},
+    ("medicine", "add"): {"admin", "pharmacist"},
+    ("supplier", "list"): {"admin"},
+    ("supplier", "add"): {"admin"},
+    ("receive",): {"pharmacist"},
+    ("sell",): {"pharmacist"},
+    ("sales-report",): {"admin", "manager"},
+    ("user", "list"): {"admin"},
+    ("user", "get"): {"admin"},
+    ("user", "add"): {"admin"},
+    ("user", "set-role"): {"admin"},
+    ("user", "delete"): {"admin"},
+}
+
+
+def _authorize_command(args: argparse.Namespace, actor: User) -> None:
+    command = (args.command, args.action) if args.command in {"user", "medicine", "supplier"} else (args.command,)
+    allowed_roles = _COMMAND_ROLES.get(command, set())
+    if actor.role not in allowed_roles:
+        raise PermissionError(f"Роль {actor.role} не имеет доступа к команде {' '.join(command)}")
+    if args.command == "writeoff" and args.medicine_id is not None and actor.role != "pharmacist":
+        raise PermissionError("Оформлять списание может фармацевт")
+    requested_pharmacy = getattr(args, "pharmacy_id", None)
+    if requested_pharmacy is not None and actor.role != "admin" and requested_pharmacy != actor.pharmacy_id:
+        raise PermissionError("Нельзя работать с данными другой аптеки")
+    if args.command == "user" and getattr(args, "user_id", None) is not None and actor.role != "admin":
+        raise PermissionError("Управление пользователями доступно только администратору")
+
+
+def _run_command(args: argparse.Namespace, service: PharmacyService, user_service: UserService) -> None:
     if args.command == "stock":
         rows = service.get_stock(args.pharmacy_id)
         for row in rows:
@@ -121,6 +231,12 @@ def _run_command(args: argparse.Namespace, service: PharmacyService) -> None:
         if not rows:
             print("Остатков нет.")
     elif args.command == "writeoff":
+        if args.medicine_id is not None:
+            if not args.pharmacy_id or not args.user_id or not args.quantity or not args.reason:
+                raise ValueError("Для списания укажите --pharmacy-id, --quantity и --reason")
+            result = service.write_off_goods(args.pharmacy_id, args.user_id, args.medicine_id, args.quantity, args.reason, args.date)
+            print(f"Списание зарегистрировано. ID: {result}")
+            return
         rows = service.get_items_for_write_off(args.pharmacy_id, args.date)
         for row in rows:
             print(
@@ -130,7 +246,7 @@ def _run_command(args: argparse.Namespace, service: PharmacyService) -> None:
             )
         if not rows:
             print("Просроченных партий нет.")
-        print("Это список для проверки; акт списания команда не оформляет.")
+        print("Чтобы оформить списание, передайте --medicine-id, --quantity и --reason.")
     elif args.command == "sale-candidates":
         items = service.get_goods_for_sale(args.pharmacy_id, args.date)
         for item in items:
@@ -142,6 +258,8 @@ def _run_command(args: argparse.Namespace, service: PharmacyService) -> None:
             print("Товаров для продажи нет.")
     elif args.command == "medicine":
         _medicine_command(args, service)
+    elif args.command == "user":
+        _user_command(args, user_service)
     elif args.command == "supplier":
         _supplier_command(args, service)
     elif args.command == "receive":
@@ -157,6 +275,41 @@ def _run_command(args: argparse.Namespace, service: PharmacyService) -> None:
             sale_date=args.date or datetime.now(timezone.utc),
         )
         print(f"Продажа №{result.sale_id} зарегистрирована. Сумма: {result.total_amount}")
+    elif args.command == "sales-report":
+        report = service.get_sales_report(args.start_date, args.end_date, args.pharmacy_id)
+        print(f"Продаж: {report.sales_count} | выручка: {report.total_amount}")
+        print("Товар | количество | выручка")
+        for name, quantity, revenue in report.items:
+            print(f"{name} | {quantity} | {revenue}")
+
+
+def _user_command(args: argparse.Namespace, service: UserService) -> None:
+    if args.action == "list":
+        users = service.list_users()
+        for user in users:
+            print(f"ID {user.id} | {user.full_name} | логин: {user.login} | роль: {user.role} | аптека: {user.pharmacy_id}")
+        if not users:
+            print("Пользователей нет.")
+        return
+    if args.action == "add":
+        user = service.add_user(User(
+            id=None, pharmacy_id=args.pharmacy_id, full_name=args.full_name.strip(),
+            login=args.login.strip(), password_hash="",
+            role=args.role,
+        ))
+        print(f"Пользователь создан. ID: {user.id} | роль: {user.role}")
+        return
+    if args.action == "get":
+        user = service.get_user(args.user_id)
+        print(f"ID {user.id} | {user.full_name} | логин: {user.login} | роль: {user.role} | аптека: {user.pharmacy_id}")
+    elif args.action == "delete":
+        service.delete_user(args.user_id)
+        print("Пользователь удалён.")
+    elif args.action == "set-role":
+        user = service.get_user(args.user_id)
+        updated = User(**{**user.__dict__, "role": args.role})
+        service.update_user(updated)
+        print(f"Роль пользователя изменена на {args.role}.")
 
 
 def _medicine_command(args: argparse.Namespace, service: PharmacyService) -> None:

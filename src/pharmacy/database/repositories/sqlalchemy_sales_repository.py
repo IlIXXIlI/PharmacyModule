@@ -1,20 +1,56 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from ...contracts.database import SalesRepository
+from ...contracts.dto.reports import SalesReport
 from ...entities import Batch
 from ..models import (
     Batch as BatchModel,
     Sale as SaleModel,
     SaleBatchItem as SaleBatchItemModel,
     SaleItem as SaleItemModel,
+    Medicine as MedicineModel,
+    WriteOff as WriteOffModel,
+    WriteOffBatchItem as WriteOffBatchItemModel,
 )
 
 
 class SQLAlchemySalesRepository(SalesRepository[Session]):
+    def sales_report(self, start_date: date, end_date: date, pharmacy_id: int | None = None) -> SalesReport:
+        start = datetime.combine(start_date, datetime.min.time())
+        end = datetime.combine(end_date, datetime.max.time())
+        conditions = [SaleModel.status == "completed", SaleModel.sale_date >= start, SaleModel.sale_date <= end]
+        if pharmacy_id is not None:
+            conditions.append(SaleModel.pharmacy_id == pharmacy_id)
+        count, amount = self.connection.execute(select(
+            func.count(SaleModel.id), func.coalesce(func.sum(SaleModel.total_amount), 0)
+        ).where(*conditions)).one()
+        grouped = self.connection.execute(
+            select(MedicineModel.name, func.sum(SaleItemModel.quantity),
+                   func.sum(SaleItemModel.quantity * SaleItemModel.sale_price))
+            .join(SaleItemModel, SaleItemModel.medicine_id == MedicineModel.id)
+            .join(SaleModel, SaleModel.id == SaleItemModel.sale_id)
+            .where(*conditions)
+            .group_by(MedicineModel.id, MedicineModel.name)
+            .order_by(func.sum(SaleItemModel.quantity * SaleItemModel.sale_price).desc())
+        ).all()
+        items = tuple((name, int(quantity), Decimal(str(revenue))) for name, quantity, revenue in grouped)
+        return SalesReport(int(count), Decimal(str(amount)), items)
+
+    def lock_batches_for_write_off(self, pharmacy_id: int, medicine_id: int) -> list[Batch]:
+        statement = (select(BatchModel).where(
+            BatchModel.pharmacy_id == pharmacy_id,
+            BatchModel.medicine_id == medicine_id,
+            BatchModel.current_quantity > 0,
+        ).order_by(BatchModel.expiry_date, BatchModel.id).with_for_update())
+        return [Batch(id=m.id, pharmacy_id=m.pharmacy_id, medicine_id=m.medicine_id,
+                      batch_number=m.batch_number, expiry_date=m.expiry_date,
+                      initial_quantity=m.initial_quantity, current_quantity=m.current_quantity)
+                for m in self.connection.scalars(statement)]
+
     def lock_available_batches(
         self, pharmacy_id: int, medicine_id: int, current_date: date
     ) -> list[Batch]:
@@ -86,3 +122,13 @@ class SQLAlchemySalesRepository(SalesRepository[Session]):
             batch_id=batch_id,
             quantity=quantity,
         ))
+
+    def create_write_off(self, pharmacy_id: int, user_id: int, written_at: datetime, reason: str) -> int:
+        record = WriteOffModel(pharmacy_id=pharmacy_id, user_id=user_id, written_at=written_at,
+                               reason=reason, status="completed")
+        self.connection.add(record)
+        self.connection.flush()
+        return record.id
+
+    def add_write_off_allocation(self, write_off_id: int, batch_id: int, quantity: int) -> None:
+        self.connection.add(WriteOffBatchItemModel(write_off_id=write_off_id, batch_id=batch_id, quantity=quantity))

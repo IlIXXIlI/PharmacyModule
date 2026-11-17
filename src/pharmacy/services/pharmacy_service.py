@@ -6,6 +6,7 @@ from ..contracts.dto.receiving import ReceiptRequest
 from ..contracts.dto.sale_candidate import SaleCandidate
 from ..contracts.dto.sales import SaleResult
 from ..contracts.dto.stock import StockRow
+from ..contracts.dto.reports import SalesReport
 from ..entities import Medicine, Supplier
 from .catalog_service import CatalogService
 from .receipt_service import ReceiptService
@@ -45,7 +46,7 @@ class PharmacyService:
         return self._catalog.list_medicines()
 
     def add_medicine(self, medicine: Medicine) -> Medicine:
-        return self._catalog.add _medicine(medicine)
+        return self._catalog.add_medicine(medicine)
 
     def list_suppliers(self) -> list[Supplier]:
         return self._catalog.list_suppliers()
@@ -86,3 +87,13 @@ class PharmacyService:
             sale_price,
             sale_date,
         )
+
+    def write_off_goods(self, pharmacy_id: int, user_id: int, medicine_id: int,
+                        quantity: int, reason: str, write_off_date: date | None = None) -> int:
+        return self._sales.write_off_goods(
+            pharmacy_id, user_id, medicine_id, quantity, reason, write_off_date or date.today()
+        )
+
+    def get_sales_report(self, start_date: date, end_date: date,
+                         pharmacy_id: int | None = None) -> SalesReport:
+        return self._sales.sales_report(start_date, end_date, pharmacy_id)

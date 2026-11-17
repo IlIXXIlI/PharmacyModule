@@ -6,7 +6,8 @@ from typing import Generic, Protocol, Sequence, TypeVar
 from .dto.stock import StockRow
 from .dto.sale_candidate import SaleCandidate
 from .dto.receiving import ReceiptRequest
-from ..entities import Batch, Medicine, Supplier
+from ..entities import Batch, Medicine, Supplier, User
+from .dto.reports import SalesReport
 
 ConnectionT = TypeVar("ConnectionT")
 
@@ -66,12 +67,38 @@ class SupplierRepository(BaseRepository[ConnectionT], ABC):
     def delete(self, supplier_id: int) -> None: ...
 
 
+class UserRepository(BaseRepository[ConnectionT], ABC):
+    @abstractmethod
+    def get_by_login(self, login: str) -> User | None: ...
+
+    @abstractmethod
+    def get(self, user_id: int) -> User | None: ...
+
+    @abstractmethod
+    def list_all(self) -> Sequence[User]: ...
+
+    @abstractmethod
+    def add(self, user: User) -> User: ...
+
+    @abstractmethod
+    def update(self, user: User) -> User: ...
+
+    @abstractmethod
+    def delete(self, user_id: int) -> None: ...
+
+
 class ReceiptRepository(BaseRepository[ConnectionT], ABC):
     @abstractmethod
     def record_receipt(self, request: ReceiptRequest) -> int: ...
 
 
 class SalesRepository(BaseRepository[ConnectionT], ABC):
+    @abstractmethod
+    def sales_report(self, start_date: date, end_date: date, pharmacy_id: int | None = None) -> SalesReport: ...
+
+    @abstractmethod
+    def lock_batches_for_write_off(self, pharmacy_id: int, medicine_id: int) -> Sequence[Batch]: ...
+
     @abstractmethod
     def lock_available_batches(
         self, pharmacy_id: int, medicine_id: int, current_date: date
@@ -92,6 +119,12 @@ class SalesRepository(BaseRepository[ConnectionT], ABC):
 
     @abstractmethod
     def add_batch_allocation(self, sale_item_id: int, batch_id: int, quantity: int) -> None: ...
+
+    @abstractmethod
+    def create_write_off(self, pharmacy_id: int, user_id: int, written_at: datetime, reason: str) -> int: ...
+
+    @abstractmethod
+    def add_write_off_allocation(self, write_off_id: int, batch_id: int, quantity: int) -> None: ...
 
 
 class BaseUnitOfWork(ABC):
@@ -168,6 +201,18 @@ class SaleUnitOfWork(Protocol):
 
 class SaleUnitOfWorkFactory(Protocol):
     def unit_of_work(self) -> SaleUnitOfWork: ...
+
+
+class UserUnitOfWork(Protocol):
+    users: UserRepository
+
+    def __enter__(self): ...
+
+    def __exit__(self, exc_type, exc, traceback) -> bool: ...
+
+
+class UserUnitOfWorkFactory(Protocol):
+    def unit_of_work(self) -> UserUnitOfWork: ...
 
 
 class BaseDatabaseProvider(ABC):

@@ -11,6 +11,9 @@ from .models import (
 
 def seed_demo_data(session: Session) -> None:
     if session.scalar(select(Pharmacy.id).limit(1)) is not None:
+        seeded_user = session.scalar(select(User).where(User.login == "pharmacist"))
+        if seeded_user is not None and seeded_user.password_hash == "demo-only":
+            seeded_user.password_hash = ""
         return
 
     pharmacy = Pharmacy(name="Аптека № 1", address="Москва, ул. Примерная, 1", phone="+7 495 000-00-00")
@@ -25,7 +28,7 @@ def seed_demo_data(session: Session) -> None:
     session.add_all([pharmacy, supplier, *medicines])
     session.flush()
     user = User(pharmacy_id=pharmacy.id, full_name="Иванова Анна", login="pharmacist",
-                password_hash="demo-only", role="pharmacist")
+                password_hash="", role="pharmacist")
     session.add(user)
     session.flush()
     receipt = Receipt(supplier_id=supplier.id, pharmacy_id=pharmacy.id, user_id=user.id,

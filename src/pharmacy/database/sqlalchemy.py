@@ -6,6 +6,7 @@ from .repositories.sqlalchemy_medicine_repository import SQLAlchemyMedicineRepos
 from .repositories.sqlalchemy_receipt_repository import SQLAlchemyReceiptRepository
 from .repositories.sqlalchemy_sales_repository import SQLAlchemySalesRepository
 from .repositories.sqlalchemy_supplier_repository import SQLAlchemySupplierRepository
+from .repositories.sqlalchemy_user_repository import SQLAlchemyUserRepository
 from ..contracts.database import BaseDatabaseProvider, BaseUnitOfWork
 from .models import Base
 
@@ -16,6 +17,7 @@ class SQLAlchemyUnitOfWork(BaseUnitOfWork):
         self.inventory = SQLAlchemyInventoryRepository(session)
         self.medicines = SQLAlchemyMedicineRepository(session)
         self.suppliers = SQLAlchemySupplierRepository(session)
+        self.users = SQLAlchemyUserRepository(session)
         self.receipts = SQLAlchemyReceiptRepository(session)
         self.sales = SQLAlchemySalesRepository(session)
 
