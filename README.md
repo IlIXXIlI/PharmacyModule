@@ -279,3 +279,19 @@ python -m pytest -q
 - [Структура проекта](docs/project-structure.md)
 - [Python API](docs/api-usage.md)
 - [Результаты тестирования](docs/testing-results.md)
+
+## Диаграммы
+
+- [Диаграмма вариантов использования (SVG)](docs/diagrams/use-cases.svg)
+- [Актуальная ER-модель (PNG)](docs/diagrams/er-model.png)
+- [Диаграмма компонентов (SVG)](docs/diagrams/component-architecture.svg)
+- [Архитектура классов (PNG)](docs/diagrams/class-architecture.png)
+- [Последовательность оформления продажи (PNG)](docs/diagrams/sale-sequence.png)
+
+### Варианты использования
+
+![Диаграмма вариантов использования модуля учёта аптеки](docs/diagrams/use-cases.svg)
+
+### Архитектура компонентов
+
+![Диаграмма компонентов приложения](docs/diagrams/component-architecture.svg)
