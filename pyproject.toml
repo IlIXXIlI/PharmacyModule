@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pharmacy-accounting-module"
+version = "0.1.0"
+description = "Модуль учёта лекарственных препаратов в аптечной сети"
+requires-python = ">=3.10"
+dependencies = [
+    "python-dotenv>=1.0,<2.0",
+    "SQLAlchemy>=2.0,<3.0",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2,<4"]
+dev = ["pytest>=8.0,<9.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
